@@ -1,111 +1,97 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
-<!-- Playables SDK -->
-<script>// Playables SDK v1.0.0
-// Game lifecycle bridge: rAF-based game-ready detection + event communication
-(function() {
-  'use strict';
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Encrypt</title>
+<style>
+:root{--bg:#fff;--fg:#1f2328;--muted:#656d76;--border:#d0d7de;--panel:#f6f8fa;--accent:#0969da;--radius:8px;--sans:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--muted:#8b949e;--border:#30363d;--panel:#161b22;--accent:#2f81f7}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);line-height:1.5}
+.wrap{max-width:860px;margin:0 auto;padding:24px 16px}
+header{margin-bottom:20px}.title{display:flex;align-items:center;gap:12px}
+.title h1{font-size:22px;margin:0;font-weight:600}
+.card{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)}
+nav.tabs{display:flex;border-bottom:1px solid var(--border)}
+nav.tabs button{flex:1;background:transparent;border:0;color:var(--muted);padding:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent}
+nav.tabs button.active{color:var(--fg);border-bottom-color:var(--accent)}
+.panel{padding:18px}label{display:block;font-size:13px;font-weight:600;margin:14px 0 6px}
+textarea,input{width:100%;font-family:var(--mono);font-size:14px;padding:10px 12px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius);outline:none}
+textarea{resize:vertical;min-height:120px}textarea[readonly]{background:var(--panel)}
+input:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px #0969da33}
+.actions{display:flex;gap:8px;margin-top:12px}button.primary{background:var(--accent);color:#fff;border:1px solid var(--accent);padding:9px 14px;border-radius:var(--radius);font-weight:600;cursor:pointer}
+button.ghost{background:var(--panel);color:var(--fg);border:1px solid var(--border);padding:8px 12px;border-radius:var(--radius);cursor:pointer}
+.output{margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
+.grid{display:grid;gap:16px}@media(min-width:760px){.grid{grid-template-columns:1.4fr.6fr}}
+.qr-box{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px}
+#qr-wrap{background:#fff;padding:8px;border-radius:6px}.hidden{display:none}.error{margin-top:10px;padding:8px 10px;border-radius:6px;background:#cf222e18;border:1px solid #cf222e55;color:#cf222e;font-size:13px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:8px 12px;border-radius:6px;opacity:0;transition:.2s}
+.toast.show{opacity:1}.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);display:grid;place-items:center;z-index:40}
+.modal{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:12px;width:min(92vw,380px)}
+.modal video{width:100%;aspect-ratio:1;background:#000;border-radius:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><div class="title"><svg width="24" height="24" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0a4 4 0 0 0-4 4v2H3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-1V4a4 4 0 0 0-4-4ZM5 4a3 3 0 1 1 6 0v2H5V4Z"/></svg><h1>Encrypt</h1></div></header>
+<div class="card">
+<nav class="tabs"><button id="tab-enc" class="active">Encrypt</button><button id="tab-dec">Decrypt</button></nav>
+<section id="pane-enc" class="panel">
+<label for="plain">Text</label><textarea id="plain" placeholder="Enter text..."></textarea>
+<label for="name">Name</label><input id="name" value="secret">
+<div class="actions"><button id="btn-enc" class="primary">Encrypt with key</button></div>
+<div id="enc-out" class="output hidden"><div class="grid"><div><label>Ciphertext</label><textarea id="cipher" readonly></textarea><div class="actions"><button id="copy-enc" class="ghost">Copy</button></div><div id="enc-err" class="error hidden"></div></div><div class="qr-box"><div id="qr-wrap"></div><div style="font-size:12px;color:var(--muted)">Scan to decrypt</div></div></div></div>
+</section>
+<section id="pane-dec" class="panel hidden">
+<div style="display:flex;justify-content:space-between;align-items:center"><label for="cipher-in" style="margin:0">Ciphertext</label><div style="display:flex;gap:6px"><button id="btn-scan" class="ghost">Scan</button><button id="btn-upload" class="ghost">Upload</button><input id="file-qr" type="file" accept="image/*" class="hidden"></div></div>
+<textarea id="cipher-in" placeholder="Paste payload..."></textarea>
+<div class="actions"><button id="btn-dec" class="primary">Decrypt with key</button></div>
+<div id="dec-out" class="output hidden"><label>Plaintext</label><textarea id="plain-out" readonly></textarea><div class="actions"><button id="copy-dec" class="ghost">Copy</button></div><div id="dec-err" class="error hidden"></div></div>
+</section>
+</div></div>
+<div id="toast" class="toast"></div>
+<div id="cam-modal" class="modal-backdrop hidden"><div class="modal"><video id="cam-video" autoplay playsinline></video><div style="display:flex;justify-content:space-between;margin-top:8px"><span style="font-size:13px;color:var(--muted)">Point at QR</span><button id="cam-close" class="ghost">Close</button></div><canvas id="cam-canvas" class="hidden"></canvas></div></div>
 
-  // Idempotency: skip if already initialized (e.g., server-side injection
-  // followed by client-side inject-javascript via the Bloks webview component).
-  if (window.playablesSDK) return;
+<script>/*! QRious v4.0.2 */!function(t,e){"object"==typeof exports&&"undefined"!=typeof module?module.exports=e():"function"==typeof define&&define.amd?define(e):t.QRious=e()}(this,function(){"use strict";function t(t,e){var n;return"function"==typeof Object.create?n=Object.create(t):(i.prototype=t,n=new i,i.prototype=null),e&&o(!0,n,e),n}function e(e,n,r,i){var a=this;return"string"!=typeof e&&(i=r,r=n,n=e,e=null),"function"!=typeof n&&(i=r,r=n,n=function(){return a.apply(this,arguments)}),o(!1,n,a,i),n.prototype=t(a.prototype,r),n.prototype.constructor=n,n.class_=e||a.class_,n.super_=a,n}function o(t,e,o){for(var n,r,i=0,a=(o=s.call(arguments,2)).length;i<a;i++)if(n=o[i])for(r in n)t&&e[r]!==undefined||(e[r]=n[r]);return e}var n=function(){};e.call(n);var i=function(){};var s=Array.prototype.slice;return function(t){function e(){return t.apply(this,arguments)}return e}()});</script>
+<script>
+(() => {
+const $=s=>document.querySelector(s);
+const tabEnc=$('#tab-enc'),tabDec=$('#tab-dec'),paneEnc=$('#pane-enc'),paneDec=$('#pane-dec');
+const plain=$('#plain'),nameIn=$('#name'),btnEnc=$('#btn-enc'),encOut=$('#enc-out'),cipher=$('#cipher'),copyEnc=$('#copy-enc'),encErr=$('#enc-err'),qrWrap=$('#qr-wrap');
+const cipherIn=$('#cipher-in'),btnDec=$('#btn-dec'),decOut=$('#dec-out'),plainOut=$('#plain-out'),copyDec=$('#copy-dec'),decErr=$('#dec-err');
+const btnScan=$('#btn-scan'),btnUpload=$('#btn-upload'),fileQr=$('#file-qr'),toast=$('#toast');
+const camModal=$('#cam-modal'),camVideo=$('#cam-video'),camCanvas=$('#cam-canvas'),camClose=$('#cam-close');
 
-  var HANDLER_NAME = 'playablesGameEventHandler';
-  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
-  var RAF_FRAME_THRESHOLD = 3;
+function setTab(e){const is=e==='enc';tabEnc.classList.toggle('active',is);tabDec.classList.toggle('active',!is);paneEnc.classList.toggle('hidden',!is);paneDec.classList.toggle('hidden',is)}tabEnc.onclick=()=>setTab('enc');tabDec.onclick=()=>setTab('dec');
+const showToast=m=>{toast.textContent=m;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),1500)};
+const showErr=(el,m)=>{el.textContent=m;el.classList.remove('hidden')};const hideErr=el=>el.classList.add('hidden');
 
-  var gameReadySent = false;
-  var firstInteractionSent = false;
-  var errorSent = false;
-  var frameCount = 0;
-  var originalRAF = window.requestAnimationFrame;
+const enc=new TextEncoder(),dec=new TextDecoder();
+const b64u=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const u64=s=>{s=s.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';return Uint8Array.from(atob(s),c=>c.charCodeAt(0)).buffer};
 
-  // --- Transport Layer ---
+async function sha256(b){return new Uint8Array(await crypto.subtle.digest('SHA-256',b))}
+let masterId=null;
+async function ensureCred(){if(masterId)return;try{const c=await navigator.credentials.get({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),userVerification:'required',hints:['security-key']}});masterId=c.id}catch{const uid=new Uint8Array(16);uid.fill(1);const c=await navigator.credentials.create({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),rp:{name:'Vault'},user:{id:uid,name:'master',displayName:'Key'},pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],authenticatorSelection:{authenticatorAttachment:'cross-platform',residentKey:'required',userVerification:'required'},hints:['security-key'],extensions:{prf:{enabled:true}},timeout:60000}});masterId=c.id}}
+async function getPrf(name,cred){const salt=await sha256(enc.encode('v1:'+name));const pk={challenge:crypto.getRandomValues(new Uint8Array(32)),userVerification:'required',hints:['security-key'],extensions:{prf:{eval:{first:salt}}}};if(cred)pk.allowCredentials=[{id:u64(cred),type:'public-key',transports:['usb','nfc','ble']}];const a=await navigator.credentials.get({publicKey:pk});const r=a.getClientExtensionResults().prf?.results?.first;if(!r)throw new Error('Key no PRF');return new Uint8Array(r)}
+async function encrypt(txt,name){await ensureCred();const prf=await getPrf(name);const key=await crypto.subtle.importKey('raw',prf,'AES-GCM',false,['encrypt']);const iv=crypto.getRandomValues(new Uint8Array(12));const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,enc.encode(txt));const a=await navigator.credentials.get({publicKey:{challenge:crypto.getRandomValues(new Uint8Array(32)),userVerification:'required',hints:['security-key']}});return`v3.${b64u(u64(a.id))}.${b64u(iv)}.${b64u(ct)}.${b64u(enc.encode(name))}`}
+async function decrypt(p){const s=p.trim().split('.');if(s.length!==5||s[0]!=='v3')throw new Error('Bad');const [_,id,iv,ct,nm]=s;const name=dec.decode(new Uint8Array(u64(nm)));const prf=await getPrf(name,id);const key=await crypto.subtle.importKey('raw',prf,'AES-GCM',false,['decrypt']);const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:new Uint8Array(u64(iv))},key,new Uint8Array(u64(ct)));return dec.decode(pt)}
 
-  function hasIOSBridge() {
-    return !!(window.webkit &&
-              window.webkit.messageHandlers &&
-              window.webkit.messageHandlers[HANDLER_NAME]);
-  }
+function renderQR(t){qrWrap.innerHTML='';const c=document.createElement('canvas');new QRious({element:c,value:t,size:220,level:'M'});qrWrap.appendChild(c)}
 
-  function hasAndroidBridge() {
-    return !!(window[ANDROID_BRIDGE_NAME] &&
-              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
-  }
+btnEnc.onclick=async()=>{hideErr(encErr);encOut.classList.add('hidden');try{const p=await encrypt(plain.value,nameIn.value.trim()||'secret');cipher.value=p;encOut.classList.remove('hidden');renderQR(p);showToast('Encrypted')}catch(e){showErr(encErr,e.message)}};
+btnDec.onclick=async()=>{hideErr(decErr);decOut.classList.add('hidden');try{const t=await decrypt(cipherIn.value);plainOut.value=t;decOut.classList.remove('hidden');showToast('Decrypted');setTimeout(()=>{plainOut.value='';decOut.classList.add('hidden')},60000)}catch(e){showErr(decErr,e.message)}};
+copyEnc.onclick=()=>{navigator.clipboard.writeText(cipher.value);showToast('Copied')};
+copyDec.onclick=()=>{navigator.clipboard.writeText(plainOut.value);showToast('Copied')};
 
-  function isInIframe() {
-    return !!(window.parent && window.parent !== window);
-  }
-
-  function sendEvent(eventName, payload) {
-    var message = {
-      type: eventName,
-      payload: payload || {},
-      timestamp: Date.now()
-    };
-
-    if (hasIOSBridge()) {
-      try {
-        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
-      } catch (e) { /* ignore */ }
-      return;
-    }
-
-    if (hasAndroidBridge()) {
-    try {
-      var p = payload || {};
-      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
-      window[ANDROID_BRIDGE_NAME].postEvent(
-        eventName,
-        JSON.stringify(p)
-      );
-    } catch (e) { /* ignore */ }
-    return;
-  }
-
-    if (isInIframe()) {
-      try {
-        window.parent.postMessage(message, '*');
-      } catch (e) { /* ignore */ }
-      return;
-    }
-  }
-
-  // --- rAF Game-Ready Detection ---
-
-  function onFrame() {
-    if (gameReadySent) return;
-
-    frameCount++;
-    if (frameCount >= RAF_FRAME_THRESHOLD) {
-      gameReadySent = true;
-      sendEvent('game_ready', {
-        frame_count: frameCount,
-        detected_at: Date.now()
-      });
-      return;
-    }
-
-    originalRAF.call(window, onFrame);
-  }
-
-  if (originalRAF) {
-    window.requestAnimationFrame = function(callback) {
-      if (!gameReadySent) {
-        return originalRAF.call(window, function(timestamp) {
-          frameCount++;
-          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
-            gameReadySent = true;
-            sendEvent('game_ready', {
-              frame_count: frameCount,
-              detected_at: Date.now()
-            });
-          }
-          callback(timestamp);
-        });
-      }
-      return originalRAF.call(window, callback);
+// scan/upload using BarcodeDetector
+btnUpload.onclick=()=>fileQr.click();fileQr.onchange=async e=>{const f=e.target.files[0];if(!f)return;const img=await createImageBitmap(f);const c=document.createElement('canvas');c.width=img.width;c.height=img.height;c.getContext('2d').drawImage(img,0,0);const d=c.getContext('2d').getImageData(0,0,c.width,c.height);if('BarcodeDetector' in window){const det=new BarcodeDetector({formats:['qr_code']});const r=await det.detect(d);if(r[0]){cipherIn.value=r[0].rawValue;setTab('dec');showToast('QR read')}}};
+let stream;btnScan.onclick=async()=>{camModal.classList.remove('hidden');stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});camVideo.srcObject=stream;const det='BarcodeDetector'in window?new BarcodeDetector({formats:['qr_code']}):null;const loop=async()=>{if(camModal.classList.contains('hidden'))return;camCanvas.width=camVideo.videoWidth;camCanvas.height=camVideo.videoHeight;camCanvas.getContext('2d').drawImage(camVideo,0,0);if(det){const r=await det.detect(camCanvas);if(r[0]){cipherIn.value=r[0].rawValue;closeCam();setTab('dec');showToast('Scanned');return}}requestAnimationFrame(loop)};camVideo.onplaying=loop};
+function closeCam(){camModal.classList.add('hidden');if(stream)stream.getTracks().forEach(t=>t.stop())}camClose.onclick=closeCam;
+})();
+</script>
+</body>
+</html>      return originalRAF.call(window, callback);
     };
   }
 
