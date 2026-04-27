@@ -917,12 +917,11 @@
         { type: 'public-key', alg: -257 }   // RS256
       ],
       authenticatorSelection: {
-        residentKey:      'required',
-        userVerification: 'required'
-        // authenticatorAttachment intentionally omitted:
-        //   'platform'       → only phone/laptop built-in (Google PM, Face ID)
-        //   'cross-platform' → only hardware keys / other devices
-        //   omitted          → browser offers everything, user chooses
+        residentKey:             'required',
+        userVerification:        'required',
+        authenticatorAttachment: 'cross-platform'  // prefer physical hardware keys
+        // Note: Chrome Android may still show Bitwarden and other OS-level
+        // credential providers despite this — enforcement is best-effort.
       },
       extensions: { prf: { enabled: true } }
     };
@@ -1103,10 +1102,11 @@
   async function getPrfKey(allowCreds) {
     const salt = await getPrfSalt();
     const publicKey = {
-      challenge:        rand(32),
-      rpId:             location.hostname,
-      userVerification: 'required',
-      extensions:       { prf: { eval: { first: salt } } }
+      challenge:               rand(32),
+      rpId:                    location.hostname,
+      userVerification:        'required',
+      authenticatorAttachment: 'cross-platform',
+      extensions:              { prf: { eval: { first: salt } } }
     };
     // Only set allowCredentials when we have a concrete list — passing an empty
     // array suppresses the platform authenticator picker on some browsers.
