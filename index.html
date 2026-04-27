@@ -3,7 +3,7 @@
 <head>
   <!--
     ============================================================
-    Encrypt / Decrypt — Security Key + Password
+    Encrypt / Decrypt — Passkey + Password
     Dual-mode: WebAuthn PRF (passkey) or PBKDF2-SHA256 (password)
     Runs fully client-side, single file, offline-capable.
     ============================================================
@@ -64,7 +64,6 @@
     /* ── 2. Reset & base ─────────────────────────────────────────────────────── */
     *             { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body    { height: 100%; overflow-x: hidden; }
-    html { overflow-x: hidden; }
     html { -webkit-touch-callout: none; }
     body {
       margin: 0;
@@ -260,7 +259,6 @@
 
     /* Show/hide password wrapper */
     .input-action { position: relative; }
-    .input-action input { padding-right: 64px; }
     .input-action input { padding-right: 60px; }
     .input-action .toggle-vis {
       position:  absolute;
@@ -587,7 +585,7 @@
         id="plain"
         placeholder="Enter text to encrypt…"
         autocomplete="off"
-        spellcheck="true"
+        spellcheck="false"
       ></textarea>
       <div id="char-counter" class="char-counter">0 chars</div>
 
@@ -614,7 +612,7 @@
         </div>
       </div></div>
         <div class="actions">
-        <button id="btn-enc" class="primary">Encrypt with security key</button>
+        <button id="btn-enc" class="primary">Encrypt with passkey</button>
       </div>
       <div id="enc-err" class="error hidden"></div>
 
@@ -731,7 +729,7 @@
         </div>
       </div></div>
         <div class="actions">
-        <button id="btn-dec" class="primary">Decrypt with security key</button>
+        <button id="btn-dec" class="primary">Decrypt with passkey</button>
       </div>
       <div id="dec-err" class="error hidden"></div>
 
@@ -1201,9 +1199,19 @@
     const parts = payload.trim().split('.');
     if (parts.length !== 3) throw new Error('Invalid payload — expected 3 dot-separated parts');
 
-    const paramBuf = b64u2buf(parts[0]);
-    const iv       = new Uint8Array(b64u2buf(parts[1]));
-    const ct       = b64u2buf(parts[2]);
+    const B64U = /^[A-Za-z0-9_-]+$/;
+    if (!parts.every(p => p.length > 0 && B64U.test(p))) {
+      throw new Error('Invalid payload — contains unexpected characters');
+    }
+
+    let paramBuf, iv, ct;
+    try {
+      paramBuf = b64u2buf(parts[0]);
+      iv       = new Uint8Array(b64u2buf(parts[1]));
+      ct       = b64u2buf(parts[2]);
+    } catch {
+      throw new Error('Invalid payload — could not decode');
+    }
 
     let key;
 
@@ -1216,7 +1224,14 @@
       let keyMaterial;
       try {
         ({ keyMaterial } = await getPrfKey([{ type: 'public-key', id: credId }]));
-      } catch {
+      } catch (e) {
+        // Re-throw user cancellations — do NOT open a second picker.
+        const name = e?.name ?? '';
+        const msg  = (e?.message ?? '').toLowerCase();
+        const userCancelled =
+          name === 'NotAllowedError' &&
+          (msg.includes('cancel') || msg.includes('abort') || msg.includes('user'));
+        if (userCancelled) throw e;
         // Fallback: open picker — handles synced passkeys with a different local ID
         ({ keyMaterial } = await getPrfKey());
       }
@@ -1239,14 +1254,17 @@
    * Title (top) adds 28px; footer (bottom) adds 22px.
    * If both empty, canvas is exactly 280×280.
    */
+  // QR state — kept in closure, not on window
+  let _lastQR = null;
+
   function renderQR(text) {
     qrWrap.innerHTML = '';
     const level   = $('#qr-level').value || 'M';
     const title   = (qrTitleInp.value  || '').trim();
-    const footer = footerTouched ? (qrFooterInp.value || '').trim() : DEFAULT_FOOTER;
-    
+    const footer  = footerTouched ? (qrFooterInp.value || '').trim() : DEFAULT_FOOTER;
+
     // Store for download
-    window._lastQR = { text, level, title, footer };
+    _lastQR = { text, level, title, footer };
 
     // Preview container
     const previewBox = document.createElement('div');
@@ -1254,7 +1272,7 @@
     previewBox.style.flexDirection = 'column';
     previewBox.style.alignItems = 'center';
     previewBox.style.gap = '6px';
-    
+
     if (title) {
       const t = document.createElement('div');
       t.textContent = title;
@@ -1267,12 +1285,12 @@
       t.style.whiteSpace = 'nowrap';
       previewBox.appendChild(t);
     }
-    
+
     const qrContainer = document.createElement('div');
     qrContainer.style.width = '280px';
     qrContainer.style.height = '280px';
     previewBox.appendChild(qrContainer);
-    
+
     const f = document.createElement('div');
     f.textContent = footer;
     f.style.font = '400 11px system-ui, -apple-system, sans-serif';
@@ -1283,9 +1301,9 @@
     f.style.textOverflow = 'ellipsis';
     f.style.whiteSpace = 'nowrap';
     previewBox.appendChild(f);
-    
+
     qrWrap.appendChild(previewBox);
-    
+
     // Create QR using qr-code-styling
     const qrCode = new QRCodeStyling({
       width: 280,
@@ -1293,20 +1311,12 @@
       type: 'canvas',
       data: text,
       margin: 10,
-      qrOptions: {
-        errorCorrectionLevel: level
-      },
-      dotsOptions: {
-        color: '#000000',
-        type: 'square'
-      },
-      backgroundOptions: {
-        color: '#ffffff'
-      }
+      qrOptions: { errorCorrectionLevel: level },
+      dotsOptions: { color: '#000000', type: 'square' },
+      backgroundOptions: { color: '#ffffff' }
     });
-    
+
     qrCode.append(qrContainer);
-    window._lastQRCodeInstance = qrCode;
   }
 
 
@@ -1432,8 +1442,8 @@
   });
 
   dlQr.addEventListener('click', async () => {
-    if (!window._lastQR) return;
-    const { text, level, title, footer } = window._lastQR;
+    if (!_lastQR) return;
+    const { text, level, title, footer } = _lastQR;
     
     // Show loading
     const originalHTML = dlQr.innerHTML;
@@ -1584,10 +1594,9 @@
     try {
       await navigator.clipboard.writeText(plainOut.value);
       showToast('Copied');
-    } catch {
-      showToast('Copy failed');
-    } finally {
       clearDecryptedOutput();
+    } catch {
+      showToast('Copy failed — text preserved');
     }
   });
 
@@ -1616,10 +1625,9 @@
   });
 
   async function decodeQRFromBitmap(bitmap) {
-    if ('BarcodeDetector' in window) {
+    if (barcodeDetector) {
       try {
-        const detector = new BarcodeDetector({ formats: ['qr_code'] });
-        const codes    = await detector.detect(bitmap);
+        const codes = await barcodeDetector.detect(bitmap);
         if (codes.length) return codes[0].rawValue;
       } catch { /* fall through */ }
     }
@@ -1642,6 +1650,10 @@
 
   let scanRaf = null;
   let stream  = null;
+  // Instantiated once — creating it inside the loop would allocate on every frame
+  const barcodeDetector = ('BarcodeDetector' in window)
+    ? new BarcodeDetector({ formats: ['qr_code'] })
+    : null;
 
   btnScan.addEventListener('click', async () => {
     hideErr(decErr);
@@ -1684,10 +1696,9 @@
 
     let found = null;
 
-    if ('BarcodeDetector' in window) {
+    if (barcodeDetector) {
       try {
-        const detector = new BarcodeDetector({ formats: ['qr_code'] });
-        const codes    = await detector.detect(camCanvas);
+        const codes = await barcodeDetector.detect(camCanvas);
         if (codes.length) found = codes[0].rawValue;
       } catch { /* ignore */ }
     }
