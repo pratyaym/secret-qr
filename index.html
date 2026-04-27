@@ -912,16 +912,14 @@
   }
 
   const WEBAUTHN_CREATE_OPTIONS = {
-    rp:      { name: 'Local Vault' },
-    user:    { id: getOrCreateUserId(), name: 'owner', displayName: 'Security Key' },
+    rp:      { id: location.hostname, name: 'Local Vault' },
+    user:    { id: getOrCreateUserId(), name: 'owner', displayName: 'Local Vault' },
     pubKeyCredParams: [
-      { type: 'public-key', alg: -7   },
-      { type: 'public-key', alg: -257 }
+      { type: 'public-key', alg: -7 }
     ],
     authenticatorSelection: {
-      residentKey:             'required',
-      requireResidentKey:      true,
-      userVerification:        'required'
+      residentKey:      'required',
+      userVerification: 'required'
     },
     extensions: { prf: { enabled: true } }
   };
@@ -1087,6 +1085,7 @@
     const salt = await crypto.subtle.digest('SHA-256', textEnc.encode('static-key'));
     const publicKey = {
       challenge:        rand(32),
+      rpId:             location.hostname,
       userVerification: 'required',
       extensions:       { prf: { eval: { first: salt } } }
     };
@@ -1171,7 +1170,13 @@
     if (currentMode === 'key') {
       // paramBuf is the credential ID
       const credId = paramBuf;
-      const { keyMaterial } = await getPrfKey([{ type: 'public-key', id: credId }]);
+      let keyMaterial;
+      try {
+        ({ keyMaterial } = await getPrfKey([{ type: 'public-key', id: credId }]));
+      } catch {
+        // Fallback to discoverable (handles synced passkeys with different ID)
+        ({ keyMaterial } = await getPrfKey([]));
+      }
       key = await crypto.subtle.importKey('raw', keyMaterial, 'AES-GCM', false, ['decrypt']);
     } else {
       // paramBuf is the 16-byte PBKDF2 salt
