@@ -1246,9 +1246,6 @@
    */
   // Sentinel error thrown after passkey creation so the encrypt flow can show
   // a friendly "created" message and let the user press Encrypt again.
-  class PasskeyCreatedError extends Error {
-    constructor() { super('PasskeyCreated'); this.name = 'PasskeyCreatedError'; }
-  }
 
   class NoPasskeyFoundError extends Error {
     constructor() { super('NoPasskeyFound'); this.name = 'NoPasskeyFoundError'; }
@@ -1595,10 +1592,6 @@
       if (e instanceof NoPasskeyFoundError) {
         // No passkey available — prompt user to create one via modal
         showNoPasskeyModal();
-      } else if (e instanceof PasskeyCreatedError) {
-        // Legacy: passkey was just registered — tell the user and let them press again.
-        // Don't show an error banner; use a prominent toast instead.
-        showToast('Passkey created — press Encrypt again');
       } else {
         showErr(encErr, e.message || 'Encryption failed');
       }
@@ -1925,7 +1918,7 @@
     try {
       await createPasskey();
       hideNoPasskeyModal();
-      showToast('Passkey created — press Encrypt again');
+      showToast('Passkey created');
     } catch (e) {
       console.error('Passkey creation error:', e);
       showErr(noPasskeyErr, e.message || 'Could not create passkey');
