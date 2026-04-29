@@ -1,6 +1,6 @@
 {
-  "name": "Encrypt / Decrypt \u2014 Security Key",
-  "short_name": "Vault Key",
+  "name": "Encrypt using passkey - Generate QR",
+  "short_name": "Secret QR",
   "description": "WebAuthn PRF-based AES-GCM encryption, runs fully client-side",
   "start_url": "./",
   "scope": "./",
