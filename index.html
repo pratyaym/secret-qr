@@ -1178,8 +1178,10 @@
         publicKey: { challenge: rand(32), ...await buildCreateOptions() }
       });
     } catch (e) {
-      const kind = classifyWebAuthnError(e);
-      if (kind === 'cancelled') throw new Error('Passkey creation was cancelled');
+      // During create(), any NotAllowedError means the user dismissed or the
+      // browser blocked the prompt — there is no "no credential found" case
+      // like there is for get(). Treat it all as a cancellation.
+      if (e?.name === 'NotAllowedError') throw new Error('Passkey creation was cancelled');
       throw new Error('Could not create passkey — ' + (e?.message || 'unknown error'));
     }
 
