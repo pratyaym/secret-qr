@@ -777,6 +777,19 @@
   </div>
 </div>
 
+<!-- ── No passkey found modal ─────────────────────────────────────────────── -->
+<div id="no-passkey-modal" class="modal-backdrop hidden" aria-hidden="true">
+  <div class="modal">
+    <h3 style="margin:0 0 8px;font-size:16px;font-weight:600">No passkey found</h3>
+    <p style="margin:0 0 16px;color:var(--muted);font-size:14px">No passkey for this site was found. Create one to start encrypting.</p>
+    <div id="no-passkey-err" class="error hidden" style="margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button id="no-passkey-cancel" class="ghost">Cancel</button>
+      <button id="no-passkey-create" class="primary">Create Passkey</button>
+    </div>
+  </div>
+</div>
+
 <!-- QR libraries loaded from CDN -->
 <script src="https://cdn.jsdelivr.net/npm/qr-code-styling@1.6.0/lib/qr-code-styling.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
@@ -888,6 +901,12 @@
   const camVideo  = $('#cam-video');
   const camCanvas = $('#cam-canvas');
   const camClose  = $('#cam-close');
+
+  // No-passkey modal
+  const noPasskeyModal  = $('#no-passkey-modal');
+  const noPasskeyCreate = $('#no-passkey-create');
+  const noPasskeyCancel = $('#no-passkey-cancel');
+  const noPasskeyErr    = $('#no-passkey-err');
 
   // ── 2. Constants & state ──────────────────────────────────────────────────
 
@@ -1231,6 +1250,10 @@
     constructor() { super('PasskeyCreated'); this.name = 'PasskeyCreatedError'; }
   }
 
+  class NoPasskeyFoundError extends Error {
+    constructor() { super('NoPasskeyFound'); this.name = 'NoPasskeyFoundError'; }
+  }
+
   async function getOrCreatePasskeyKey() {
     if (!window.PublicKeyCredential) {
       throw new Error('Your browser does not support passkeys');
@@ -1251,15 +1274,9 @@
       // PRF not supported — passkey exists but can't be used for encryption
       if (e.message?.includes('PRF')) throw e;
 
-      // No credential found or unknown — fall through to creation
+      // No credential found or unknown — signal to UI
+      throw new NoPasskeyFoundError();
     }
-
-    // Step 2: no usable passkey found — create one, then stop.
-    // We do NOT immediately call get() again: that would show two prompts in a
-    // row. Instead we throw PasskeyCreatedError so the UI can inform the user
-    // and let them press Encrypt again to complete the flow.
-    await createPasskey();
-    throw new PasskeyCreatedError();
   }
 
   /**
@@ -1575,8 +1592,11 @@
 
     } catch (e) {
       console.error('Encryption error:', e);
-      if (e instanceof PasskeyCreatedError) {
-        // Passkey was just registered — tell the user and let them press again.
+      if (e instanceof NoPasskeyFoundError) {
+        // No passkey available — prompt user to create one via modal
+        showNoPasskeyModal();
+      } else if (e instanceof PasskeyCreatedError) {
+        // Legacy: passkey was just registered — tell the user and let them press again.
         // Don't show an error banner; use a prominent toast instead.
         showToast('Passkey created — press Encrypt again');
       } else {
@@ -1879,6 +1899,40 @@
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !camModal.classList.contains('hidden')) closeCam();
+    if (e.key === 'Escape' && !noPasskeyModal.classList.contains('hidden')) hideNoPasskeyModal();
+  });
+
+  // ── 15b. No-passkey modal ─────────────────────────────────────────────────
+
+  function showNoPasskeyModal() {
+    hideErr(noPasskeyErr);
+    noPasskeyModal.classList.remove('hidden');
+    noPasskeyModal.setAttribute('aria-hidden', 'false');
+  }
+
+  function hideNoPasskeyModal() {
+    noPasskeyModal.classList.add('hidden');
+    noPasskeyModal.setAttribute('aria-hidden', 'true');
+    hideErr(noPasskeyErr);
+  }
+
+  noPasskeyCancel.addEventListener('click', hideNoPasskeyModal);
+
+  noPasskeyCreate.addEventListener('click', async () => {
+    hideErr(noPasskeyErr);
+    noPasskeyCreate.disabled = true;
+    noPasskeyCreate.textContent = 'Creating…';
+    try {
+      await createPasskey();
+      hideNoPasskeyModal();
+      showToast('Passkey created — press Encrypt again');
+    } catch (e) {
+      console.error('Passkey creation error:', e);
+      showErr(noPasskeyErr, e.message || 'Could not create passkey');
+    } finally {
+      noPasskeyCreate.disabled = false;
+      noPasskeyCreate.textContent = 'Create Passkey';
+    }
   });
 
   // ── 16. Service worker ────────────────────────────────────────────────────
