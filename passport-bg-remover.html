@@ -376,9 +376,9 @@
 <script type="module">
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.4.0/+esm';
 
-// use browser cache, allow remote models
 env.allowRemoteModels = true;
 env.useBrowserCache = true;
+env.backends.onnx.wasm.numThreads = 1; // mobile-friendly
 
 const $ = id => document.getElementById(id);
 const fileInput = $('fileInput');
@@ -404,16 +404,31 @@ let lastMask = null;
 
 async function initModel() {
   try {
-    statusEl.textContent = 'Downloading AI model (~130 MB)…';
-    // BiRefNet is SOTA for hair; RMBG-1.4 is similar size. Using BiRefNet general.
-    segmenter = await pipeline('image-segmentation', 'Xenova/birefnet', {
-      device: 'webgpu', // falls back to wasm automatically
+    statusEl.textContent = 'Preparing AI…';
+    // Progress callback
+    const progressCallback = (p) => {
+      if (p.status === 'progress') {
+        const pct = Math.round(p.progress * 100);
+        statusEl.textContent = `Downloading model… ${pct}%`;
+      } else if (p.status === 'ready') {
+        statusEl.textContent = 'Model ready';
+      }
+    };
+    env.progressCallback = progressCallback;
+
+    // Use RMBG-1.4 quantized - works on Android, much smaller
+    segmenter = await pipeline('image-segmentation', 'briaai/RMBG-1.4', {
+      quantized: true,
+      // don't force webgpu, let library choose wasm on mobile
     });
     statusEl.textContent = '✓ Model ready';
     if (loadedImage) processBtn.disabled = false;
   } catch (e) {
-    console.error(e);
-    statusEl.textContent = '✗ Model failed to load';
+    console.error('Model load error:', e);
+    statusEl.textContent = '✗ Load failed: ' + (e.message || 'check console');
+    // show detailed error for debugging
+    alert('Model failed: ' + e.message + '
+Try desktop Chrome or use Wi-Fi.');
   }
 }
 initModel();
@@ -469,9 +484,7 @@ processBtn.addEventListener('click', async () => {
   statusEl.textContent = 'Removing background…';
 
   try {
-    // Transformers.js accepts image element or URL
-    const result = await segmenter(loadedImage.src, { threshold: 0 });
-    // result is [{label, mask: RawImage}]
+    const result = await segmenter(loadedImage.src);
     const mask = result[0].mask;
     lastMask = mask;
     renderWithMask();
@@ -491,37 +504,30 @@ function renderWithMask() {
   const h = loadedImage.naturalHeight;
   canvas.width = w;
   canvas.height = h;
-
-  // draw original
   ctx.drawImage(loadedImage, 0, 0, w, h);
   const imgData = ctx.getImageData(0, 0, w, h);
   const pixels = imgData.data;
 
-  // get mask canvas scaled to image size
   const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = w;
-  maskCanvas.height = h;
+  maskCanvas.width = w; maskCanvas.height = h;
   const mctx = maskCanvas.getContext('2d');
-  // lastMask is RawImage with .toCanvas()
   const rawCanvas = lastMask.toCanvas();
   mctx.drawImage(rawCanvas, 0, 0, w, h);
   const maskData = mctx.getImageData(0, 0, w, h).data;
 
-  const hex = chosenColor.replace('#', '');
-  const br = parseInt(hex.slice(0,2), 16);
-  const bg = parseInt(hex.slice(2,4), 16);
-  const bb = parseInt(hex.slice(4,6), 16);
+  const hex = chosenColor.replace('#','');
+  const br = parseInt(hex.slice(0,2),16);
+  const bg = parseInt(hex.slice(2,4),16);
+  const bb = parseInt(hex.slice(4,6),16);
 
-  for (let i = 0; i < w * h; i++) {
-    const alpha = maskData[i * 4] / 255; // mask is grayscale
-    const p = i * 4;
-    pixels[p]     = pixels[p] * alpha + br * (1 - alpha);
-    pixels[p + 1] = pixels[p + 1] * alpha + bg * (1 - alpha);
-    pixels[p + 2] = pixels[p + 2] * alpha + bb * (1 - alpha);
-    pixels[p + 3] = 255;
+  for (let i=0; i<w*h; i++) {
+    const alpha = maskData[i*4] / 255;
+    const p = i*4;
+    pixels[p]   = pixels[p]*alpha + br*(1-alpha);
+    pixels[p+1] = pixels[p+1]*alpha + bg*(1-alpha);
+    pixels[p+2] = pixels[p+2]*alpha + bb*(1-alpha);
   }
-
-  ctx.putImageData(imgData, 0, 0);
+  ctx.putImageData(imgData,0,0);
   dlBtn.href = canvas.toDataURL('image/png');
   dlBtn.style.display = 'block';
 }
