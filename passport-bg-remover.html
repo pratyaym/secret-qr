@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Passport Photo — Background Remover</title>
+<script type="importmap">
+{
+  "imports": {
+    "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.15/+esm"
+  }
+}
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,wght@0,300;0,600;1,300&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f5f0e8;
+    --surface: #fffdf8;
+    --ink: #1a1612;
+    --ink-muted: #6b6057;
+    --accent: #c8440a;
+    --accent-light: #f0d5c8;
+    --border: #ddd8ce;
+    --mono: 'DM Mono', monospace;
+    --serif: 'Fraunces', Georgia, serif;
+  }
+
+  body {
+    font-family: var(--mono);
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+  }
+
+  header {
+    padding: 2rem 3rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 1.5rem;
+  }
+
+  header h1 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 1.6rem;
+    letter-spacing: -0.02em;
+  }
+
+  header span {
+    font-size: 0.72rem;
+    color: var(--ink-muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  main {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 0;
+    min-height: 0;
+  }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.8rem;
+    overflow-y: auto;
+  }
+
+  .section-label {
+    font-size: 0.65rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    margin-bottom: 0.6rem;
+  }
+
+  /* Drop zone */
+  .drop-zone {
+    border: 1.5px dashed var(--border);
+    border-radius: 6px;
+    padding: 2rem 1rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    position: relative;
+  }
+
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-light);
+  }
+
+  .drop-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+
+  .drop-icon { font-size: 2rem; margin-bottom: 0.5rem; display: block; }
+
+  .drop-zone p { font-size: 0.75rem; color: var(--ink-muted); line-height: 1.5; }
+  .drop-zone strong { color: var(--accent); font-weight: 500; }
+
+  /* Thumb */
+  .thumb-wrap { display: none; position: relative; }
+
+  .thumb-wrap img {
+    width: 100%;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    display: block;
+  }
+
+  .thumb-wrap .change-btn {
+    position: absolute;
+    bottom: 8px; right: 8px;
+    background: rgba(26,22,18,0.75);
+    color: #fff;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    border: none;
+    border-radius: 3px;
+    padding: 4px 8px;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+  }
+
+  /* Controls */
+  .control-group { display: flex; flex-direction: column; gap: 0.9rem; }
+
+  .field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+  .field label {
+    font-size: 0.7rem;
+    color: var(--ink-muted);
+    letter-spacing: 0.05em;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .field label span { color: var(--ink); }
+
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 3px;
+    background: var(--border);
+    border-radius: 3px;
+    outline: none;
+  }
+
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--ink);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  input[type=range]::-webkit-slider-thumb:hover { background: var(--accent); }
+
+  /* Color swatches */
+  .swatch-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+  }
+
+  .swatch {
+    aspect-ratio: 1;
+    border-radius: 5px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform 0.15s, border-color 0.15s;
+    outline: 1px solid var(--border);
+  }
+
+  .swatch:hover { transform: scale(1.08); }
+  .swatch.active { border-color: var(--ink); outline-color: var(--ink); }
+
+  .custom-row { display: flex; align-items: center; gap: 0.6rem; }
+
+  .custom-swatch {
+    width: 26px; height: 26px;
+    border-radius: 4px;
+    border: 1.5px solid var(--border);
+    overflow: hidden;
+    flex-shrink: 0;
+    position: relative;
+    cursor: pointer;
+  }
+
+  .custom-swatch input[type=color] {
+    position: absolute;
+    width: 200%; height: 200%;
+    top: -50%; left: -50%;
+    border: none; cursor: pointer; padding: 0;
+  }
+
+  .custom-label { font-size: 0.7rem; color: var(--ink-muted); }
+
+  /* Buttons */
+  .gen-btn {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: var(--ink);
+    color: var(--bg);
+    border: none;
+    border-radius: 5px;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    transition: background 0.2s, transform 0.1s;
+    width: 100%;
+    margin-top: auto;
+  }
+
+  .gen-btn:hover { background: var(--accent); }
+  .gen-btn:active { transform: scale(0.98); }
+  .gen-btn:disabled { background: var(--border); color: var(--ink-muted); cursor: not-allowed; }
+
+  .dl-btn {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: transparent;
+    color: var(--accent);
+    border: 1.5px solid var(--accent);
+    border-radius: 5px;
+    padding: 0.6rem 1rem;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+    width: 100%;
+    display: none;
+    text-align: center;
+    text-decoration: none;
+  }
+
+  .dl-btn:hover { background: var(--accent); color: #fff; }
+
+  #status { font-size: 0.7rem; color: var(--ink-muted); min-height: 1em; }
+
+  /* ── PREVIEW ── */
+  .preview-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem;
+    gap: 1rem;
+    background: #e8e3da;
+    background-image: radial-gradient(circle, #ccc8c0 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  .canvas-wrap {
+    box-shadow: 0 8px 40px rgba(0,0,0,0.18);
+    border-radius: 2px;
+    overflow: hidden;
+    max-width: 100%;
+    max-height: 70vh;
+    display: none;
+  }
+
+  canvas { display: block; max-width: 100%; max-height: 70vh; object-fit: contain; }
+
+  .preview-hint { font-size: 0.7rem; color: #9a9590; letter-spacing: 0.06em; }
+
+  .spinner {
+    display: none;
+    width: 36px; height: 36px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  footer {
+    padding: 0.8rem 3rem;
+    border-top: 1px solid var(--border);
+    font-size: 0.65rem;
+    color: var(--ink-muted);
+    letter-spacing: 0.05em;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  @media (max-width: 700px) {
+    main { grid-template-columns: 1fr; }
+    .sidebar { border-right: none; border-bottom: 1px solid var(--border); }
+    header { padding: 1.2rem 1.5rem; }
+    .preview-area { padding: 1.5rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Passport BG Remover</h1>
+  <span>On-device AI · No upload</span>
+</header>
+
+<main>
+  <aside class="sidebar">
+
+    <div>
+      <p class="section-label">01 — Photo</p>
+      <div class="drop-zone" id="dropZone">
+        <input type="file" id="fileInput" accept="image/*">
+        <span class="drop-icon">⬆︎</span>
+        <p><strong>Click or drag</strong> your photo here.<br>Stays on your device.</p>
+      </div>
+      <div class="thumb-wrap" id="thumbWrap">
+        <img id="thumbImg" src="" alt="preview">
+        <button class="change-btn" id="changeBtn">change</button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <p class="section-label">02 — Background Color</p>
+      <div class="swatch-grid">
+        <div class="swatch active" style="background:#ffffff" data-color="#ffffff" title="White"></div>
+        <div class="swatch" style="background:#f5f0e8" data-color="#f5f0e8" title="Off-white"></div>
+        <div class="swatch" style="background:#a8c8e8" data-color="#a8c8e8" title="Light blue"></div>
+        <div class="swatch" style="background:#4a90d9" data-color="#4a90d9" title="Blue"></div>
+        <div class="swatch" style="background:#1a3a6b" data-color="#1a3a6b" title="Dark blue"></div>
+        <div class="swatch" style="background:#c8c8c8" data-color="#c8c8c8" title="Gray"></div>
+        <div class="swatch" style="background:#cc2020" data-color="#cc2020" title="Red"></div>
+        <div class="swatch" style="background:#2d7a3a" data-color="#2d7a3a" title="Green"></div>
+        <div class="swatch" style="background:#fdf6e3" data-color="#fdf6e3" title="Cream"></div>
+      </div>
+      <div class="custom-row">
+        <div class="custom-swatch">
+          <input type="color" id="customColor" value="#ffffff">
+        </div>
+        <span class="custom-label">Custom color</span>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <p class="section-label">03 — Edge Smoothing</p>
+      <div class="field">
+        <label>Softness <span id="smoothVal">4</span>px</label>
+        <input type="range" id="smoothRange" min="0" max="12" value="4" step="1">
+      </div>
+    </div>
+
+    <div id="status">Loading AI model…</div>
+
+    <button class="gen-btn" id="processBtn" disabled>Remove Background</button>
+    <a class="dl-btn" id="dlBtn" download="passport-photo.png">↓ Download PNG</a>
+
+  </aside>
+
+  <section class="preview-area">
+    <div class="spinner" id="spinner"></div>
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="canvas"></canvas>
+    </div>
+    <p class="preview-hint" id="hint">Upload a photo and click Remove Background</p>
+  </section>
+</main>
+
+<footer>
+  <span>All processing happens in your browser — nothing is uploaded.</span>
+  <span>Powered by MediaPipe Selfie Segmentation</span>
+</footer>
+
+<script type="module">
+import { ImageSegmenter, FilesetResolver } from "@mediapipe/tasks-vision";
+
+const fileInput   = document.getElementById('fileInput');
+const dropZone    = document.getElementById('dropZone');
+const thumbWrap   = document.getElementById('thumbWrap');
+const thumbImg    = document.getElementById('thumbImg');
+const changeBtn   = document.getElementById('changeBtn');
+const processBtn  = document.getElementById('processBtn');
+const dlBtn       = document.getElementById('dlBtn');
+const canvas      = document.getElementById('canvas');
+const canvasWrap  = document.getElementById('canvasWrap');
+const ctx         = canvas.getContext('2d');
+const statusEl    = document.getElementById('status');
+const hint        = document.getElementById('hint');
+const spinner     = document.getElementById('spinner');
+const smoothRange = document.getElementById('smoothRange');
+const smoothVal   = document.getElementById('smoothVal');
+const customColor = document.getElementById('customColor');
+const swatches    = document.querySelectorAll('.swatch');
+
+let segmenter   = null;
+let loadedImage = null;
+let chosenColor = '#ffffff';
+let storedMask  = null;
+let storedW = 0, storedH = 0;
+let personValue = 0; // auto-detected: which mask value = person
+
+// ── Load MediaPipe ──
+async function initMediaPipe() {
+  try {
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.15/wasm"
+    );
+    segmenter = await ImageSegmenter.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
+        delegate: "GPU"
+      },
+      outputCategoryMask: true,
+      outputConfidenceMasks: false,
+      runningMode: "IMAGE"
+    });
+    statusEl.textContent = '✓ Model ready';
+    if (loadedImage) processBtn.disabled = false;
+  } catch(e) {
+    statusEl.textContent = '✗ Model failed — check connection.';
+    console.error(e);
+  }
+}
+
+initMediaPipe();
+
+// ── File handling ──
+function handleFile(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    loadedImage = new Image();
+    loadedImage.onload = () => {
+      thumbImg.src = ev.target.result;
+      dropZone.style.display = 'none';
+      thumbWrap.style.display = 'block';
+      if (segmenter) processBtn.disabled = false;
+      dlBtn.style.display = 'none';
+      canvasWrap.style.display = 'none';
+      hint.style.display = 'block';
+      storedMask = null;
+      statusEl.textContent = `Loaded: ${file.name}`;
+    };
+    loadedImage.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+changeBtn.addEventListener('click', () => { fileInput.value = ''; fileInput.click(); });
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  handleFile(e.dataTransfer.files[0]);
+});
+
+// ── Color selection ──
+swatches.forEach(s => {
+  s.addEventListener('click', () => {
+    swatches.forEach(b => b.classList.remove('active'));
+    s.classList.add('active');
+    chosenColor = s.dataset.color;
+    customColor.value = chosenColor;
+    if (storedMask) applyMaskAndRender();
+  });
+});
+
+customColor.addEventListener('input', () => {
+  swatches.forEach(b => b.classList.remove('active'));
+  chosenColor = customColor.value;
+  if (storedMask) applyMaskAndRender();
+});
+
+// ── Smoothing slider ──
+smoothRange.addEventListener('input', () => {
+  smoothVal.textContent = smoothRange.value;
+  if (storedMask) applyMaskAndRender();
+});
+
+// ── Process ──
+processBtn.addEventListener('click', async () => {
+  if (!segmenter || !loadedImage) return;
+  processBtn.disabled = true;
+  hint.style.display = 'none';
+  canvasWrap.style.display = 'none';
+  spinner.style.display = 'block';
+  statusEl.textContent = 'Segmenting…';
+
+  try {
+    const offscreen = document.createElement('canvas');
+    offscreen.width  = loadedImage.naturalWidth;
+    offscreen.height = loadedImage.naturalHeight;
+    offscreen.getContext('2d').drawImage(loadedImage, 0, 0);
+
+    storedW = loadedImage.naturalWidth;
+    storedH = loadedImage.naturalHeight;
+
+    segmenter.segment(offscreen, (result) => {
+      try {
+        const mask = result.categoryMask;
+        const raw  = mask.getAsUint8Array();
+        storedMask = new Uint8Array(raw); // copy before close
+        mask.close();
+
+        // Auto-detect which value = person by checking center pixel
+        // (center of a passport photo is almost always the face/person)
+        const centerIdx = Math.floor(storedH / 2) * storedW + Math.floor(storedW / 2);
+        personValue = storedMask[centerIdx]; // 0 or 1 — whichever is at center
+
+        console.log('Mask unique values:', [...new Set(storedMask)], 'Person value (center):', personValue);
+
+        applyMaskAndRender();
+        statusEl.textContent = '✓ Done — adjust color or download';
+      } catch(err) {
+        statusEl.textContent = '✗ Mask error: ' + err.message;
+        console.error(err);
+      }
+      spinner.style.display = 'none';
+      canvasWrap.style.display = 'block';
+      processBtn.disabled = false;
+    });
+  } catch(e) {
+    statusEl.textContent = '✗ Failed: ' + e.message;
+    console.error(e);
+    spinner.style.display = 'none';
+    processBtn.disabled = false;
+  }
+});
+
+function applyMaskAndRender() {
+  const w = storedW, h = storedH;
+  canvas.width = w; canvas.height = h;
+  ctx.drawImage(loadedImage, 0, 0, w, h);
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const pixels  = imgData.data;
+
+  const hex = chosenColor.replace('#','');
+  const br  = parseInt(hex.slice(0,2), 16);
+  const bg  = parseInt(hex.slice(2,4), 16);
+  const bb  = parseInt(hex.slice(4,6), 16);
+
+  // Build alpha from mask (person = category 0)
+  const alpha = new Float32Array(w * h);
+  for (let i = 0; i < storedMask.length; i++) {
+    alpha[i] = storedMask[i] === personValue ? 1.0 : 0.0;
+  }
+
+  // Box blur for edge smoothing
+  const softness = parseInt(smoothRange.value);
+  if (softness > 0) {
+    const blurred = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let sum = 0, count = 0;
+        for (let dy = -softness; dy <= softness; dy++) {
+          for (let dx = -softness; dx <= softness; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (nx >= 0 && nx < w && ny >= 0 && ny < h) { sum += alpha[ny * w + nx]; count++; }
+          }
+        }
+        blurred[y * w + x] = sum / count;
+      }
+    }
+    alpha.set(blurred);
+  }
+
+  // Composite person over chosen color
+  for (let i = 0; i < w * h; i++) {
+    const a = alpha[i], pi = i * 4;
+    pixels[pi]   = Math.round(a * pixels[pi]   + (1 - a) * br);
+    pixels[pi+1] = Math.round(a * pixels[pi+1] + (1 - a) * bg);
+    pixels[pi+2] = Math.round(a * pixels[pi+2] + (1 - a) * bb);
+    pixels[pi+3] = 255;
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+  dlBtn.href = canvas.toDataURL('image/png');
+  dlBtn.style.display = 'block';
+  hint.style.display = 'none';
+}
+</script>
+</body>
+</html>
