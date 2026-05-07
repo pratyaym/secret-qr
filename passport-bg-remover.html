@@ -352,14 +352,6 @@
       </div>
     </div>
 
-    <div class="control-group">
-      <p class="section-label">03 — Edge Smoothing</p>
-      <div class="field">
-        <label>Softness <span id="smoothVal">4</span>px</label>
-        <input type="range" id="smoothRange" min="0" max="12" value="4" step="1">
-      </div>
-    </div>
-
     <div id="status">Loading AI model…</div>
 
     <button class="gen-btn" id="processBtn" disabled>Remove Background</button>
@@ -382,212 +374,156 @@
 </footer>
 
 <script type="module">
-import { ImageSegmenter, FilesetResolver } from "@mediapipe/tasks-vision";
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.4.0/+esm';
 
-const fileInput   = document.getElementById('fileInput');
-const dropZone    = document.getElementById('dropZone');
-const thumbWrap   = document.getElementById('thumbWrap');
-const thumbImg    = document.getElementById('thumbImg');
-const changeBtn   = document.getElementById('changeBtn');
-const processBtn  = document.getElementById('processBtn');
-const dlBtn       = document.getElementById('dlBtn');
-const canvas      = document.getElementById('canvas');
-const canvasWrap  = document.getElementById('canvasWrap');
-const ctx         = canvas.getContext('2d');
-const statusEl    = document.getElementById('status');
-const hint        = document.getElementById('hint');
-const spinner     = document.getElementById('spinner');
-const smoothRange = document.getElementById('smoothRange');
-const smoothVal   = document.getElementById('smoothVal');
-const customColor = document.getElementById('customColor');
-const swatches    = document.querySelectorAll('.swatch');
+// use browser cache, allow remote models
+env.allowRemoteModels = true;
+env.useBrowserCache = true;
 
-let segmenter   = null;
+const $ = id => document.getElementById(id);
+const fileInput = $('fileInput');
+const dropZone = $('dropZone');
+const thumbWrap = $('thumbWrap');
+const thumbImg = $('thumbImg');
+const changeBtn = $('changeBtn');
+const processBtn = $('processBtn');
+const dlBtn = $('dlBtn');
+const canvas = $('canvas');
+const ctx = canvas.getContext('2d');
+const statusEl = $('status');
+const hint = $('hint');
+const spinner = $('spinner');
+const customColor = $('customColor');
+const swatches = document.querySelectorAll('.swatch');
+const canvasWrap = $('canvasWrap');
+
+let segmenter = null;
 let loadedImage = null;
 let chosenColor = '#ffffff';
-let storedMask  = null;
-let storedW = 0, storedH = 0;
-let personValue = 0; // auto-detected: which mask value = person
+let lastMask = null;
 
-// ── Load MediaPipe ──
-async function initMediaPipe() {
+async function initModel() {
   try {
-    const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.15/wasm"
-    );
-    segmenter = await ImageSegmenter.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
-        delegate: "GPU"
-      },
-      outputCategoryMask: true,
-      outputConfidenceMasks: false,
-      runningMode: "IMAGE"
+    statusEl.textContent = 'Downloading AI model (~130 MB)…';
+    // BiRefNet is SOTA for hair; RMBG-1.4 is similar size. Using BiRefNet general.
+    segmenter = await pipeline('image-segmentation', 'Xenova/birefnet', {
+      device: 'webgpu', // falls back to wasm automatically
     });
     statusEl.textContent = '✓ Model ready';
     if (loadedImage) processBtn.disabled = false;
-  } catch(e) {
-    statusEl.textContent = '✗ Model failed — check connection.';
+  } catch (e) {
     console.error(e);
+    statusEl.textContent = '✗ Model failed to load';
   }
 }
+initModel();
 
-initMediaPipe();
-
-// ── File handling ──
 function handleFile(file) {
-  if (!file || !file.type.startsWith('image/')) return;
+  if (!file?.type.startsWith('image/')) return;
   const reader = new FileReader();
-  reader.onload = ev => {
+  reader.onload = e => {
     loadedImage = new Image();
     loadedImage.onload = () => {
-      thumbImg.src = ev.target.result;
+      thumbImg.src = e.target.result;
       dropZone.style.display = 'none';
       thumbWrap.style.display = 'block';
-      if (segmenter) processBtn.disabled = false;
+      processBtn.disabled = !segmenter;
       dlBtn.style.display = 'none';
       canvasWrap.style.display = 'none';
       hint.style.display = 'block';
-      storedMask = null;
+      lastMask = null;
       statusEl.textContent = `Loaded: ${file.name}`;
     };
-    loadedImage.src = ev.target.result;
+    loadedImage.src = e.target.result;
   };
   reader.readAsDataURL(file);
 }
 
 fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
-changeBtn.addEventListener('click', () => { fileInput.value = ''; fileInput.click(); });
+changeBtn.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-dropZone.addEventListener('drop', e => {
-  e.preventDefault(); dropZone.classList.remove('drag-over');
-  handleFile(e.dataTransfer.files[0]);
-});
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFile(e.dataTransfer.files[0]); });
 
-// ── Color selection ──
 swatches.forEach(s => {
   s.addEventListener('click', () => {
     swatches.forEach(b => b.classList.remove('active'));
     s.classList.add('active');
     chosenColor = s.dataset.color;
     customColor.value = chosenColor;
-    if (storedMask) applyMaskAndRender();
+    if (lastMask) renderWithMask();
   });
 });
-
 customColor.addEventListener('input', () => {
   swatches.forEach(b => b.classList.remove('active'));
   chosenColor = customColor.value;
-  if (storedMask) applyMaskAndRender();
+  if (lastMask) renderWithMask();
 });
 
-// ── Smoothing slider ──
-smoothRange.addEventListener('input', () => {
-  smoothVal.textContent = smoothRange.value;
-  if (storedMask) applyMaskAndRender();
-});
-
-// ── Process ──
 processBtn.addEventListener('click', async () => {
   if (!segmenter || !loadedImage) return;
   processBtn.disabled = true;
-  hint.style.display = 'none';
-  canvasWrap.style.display = 'none';
   spinner.style.display = 'block';
-  statusEl.textContent = 'Segmenting…';
+  canvasWrap.style.display = 'none';
+  hint.style.display = 'none';
+  statusEl.textContent = 'Removing background…';
 
   try {
-    const offscreen = document.createElement('canvas');
-    offscreen.width  = loadedImage.naturalWidth;
-    offscreen.height = loadedImage.naturalHeight;
-    offscreen.getContext('2d').drawImage(loadedImage, 0, 0);
-
-    storedW = loadedImage.naturalWidth;
-    storedH = loadedImage.naturalHeight;
-
-    segmenter.segment(offscreen, (result) => {
-      try {
-        const mask = result.categoryMask;
-        const raw  = mask.getAsUint8Array();
-        storedMask = new Uint8Array(raw); // copy before close
-        mask.close();
-
-        // Auto-detect which value = person by checking center pixel
-        // (center of a passport photo is almost always the face/person)
-        const centerIdx = Math.floor(storedH / 2) * storedW + Math.floor(storedW / 2);
-        personValue = storedMask[centerIdx]; // 0 or 1 — whichever is at center
-
-        console.log('Mask unique values:', [...new Set(storedMask)], 'Person value (center):', personValue);
-
-        applyMaskAndRender();
-        statusEl.textContent = '✓ Done — adjust color or download';
-      } catch(err) {
-        statusEl.textContent = '✗ Mask error: ' + err.message;
-        console.error(err);
-      }
-      spinner.style.display = 'none';
-      canvasWrap.style.display = 'block';
-      processBtn.disabled = false;
-    });
-  } catch(e) {
-    statusEl.textContent = '✗ Failed: ' + e.message;
+    // Transformers.js accepts image element or URL
+    const result = await segmenter(loadedImage.src, { threshold: 0 });
+    // result is [{label, mask: RawImage}]
+    const mask = result[0].mask;
+    lastMask = mask;
+    renderWithMask();
+    statusEl.textContent = '✓ Done';
+  } catch (e) {
     console.error(e);
+    statusEl.textContent = '✗ Failed: ' + e.message;
+  } finally {
     spinner.style.display = 'none';
+    canvasWrap.style.display = 'block';
     processBtn.disabled = false;
   }
 });
 
-function applyMaskAndRender() {
-  const w = storedW, h = storedH;
-  canvas.width = w; canvas.height = h;
+function renderWithMask() {
+  const w = loadedImage.naturalWidth;
+  const h = loadedImage.naturalHeight;
+  canvas.width = w;
+  canvas.height = h;
+
+  // draw original
   ctx.drawImage(loadedImage, 0, 0, w, h);
   const imgData = ctx.getImageData(0, 0, w, h);
-  const pixels  = imgData.data;
+  const pixels = imgData.data;
 
-  const hex = chosenColor.replace('#','');
-  const br  = parseInt(hex.slice(0,2), 16);
-  const bg  = parseInt(hex.slice(2,4), 16);
-  const bb  = parseInt(hex.slice(4,6), 16);
+  // get mask canvas scaled to image size
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = w;
+  maskCanvas.height = h;
+  const mctx = maskCanvas.getContext('2d');
+  // lastMask is RawImage with .toCanvas()
+  const rawCanvas = lastMask.toCanvas();
+  mctx.drawImage(rawCanvas, 0, 0, w, h);
+  const maskData = mctx.getImageData(0, 0, w, h).data;
 
-  // Build alpha from mask (person = category 0)
-  const alpha = new Float32Array(w * h);
-  for (let i = 0; i < storedMask.length; i++) {
-    alpha[i] = storedMask[i] === personValue ? 1.0 : 0.0;
-  }
+  const hex = chosenColor.replace('#', '');
+  const br = parseInt(hex.slice(0,2), 16);
+  const bg = parseInt(hex.slice(2,4), 16);
+  const bb = parseInt(hex.slice(4,6), 16);
 
-  // Box blur for edge smoothing
-  const softness = parseInt(smoothRange.value);
-  if (softness > 0) {
-    const blurred = new Float32Array(w * h);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let sum = 0, count = 0;
-        for (let dy = -softness; dy <= softness; dy++) {
-          for (let dx = -softness; dx <= softness; dx++) {
-            const nx = x + dx, ny = y + dy;
-            if (nx >= 0 && nx < w && ny >= 0 && ny < h) { sum += alpha[ny * w + nx]; count++; }
-          }
-        }
-        blurred[y * w + x] = sum / count;
-      }
-    }
-    alpha.set(blurred);
-  }
-
-  // Composite person over chosen color
   for (let i = 0; i < w * h; i++) {
-    const a = alpha[i], pi = i * 4;
-    pixels[pi]   = Math.round(a * pixels[pi]   + (1 - a) * br);
-    pixels[pi+1] = Math.round(a * pixels[pi+1] + (1 - a) * bg);
-    pixels[pi+2] = Math.round(a * pixels[pi+2] + (1 - a) * bb);
-    pixels[pi+3] = 255;
+    const alpha = maskData[i * 4] / 255; // mask is grayscale
+    const p = i * 4;
+    pixels[p]     = pixels[p] * alpha + br * (1 - alpha);
+    pixels[p + 1] = pixels[p + 1] * alpha + bg * (1 - alpha);
+    pixels[p + 2] = pixels[p + 2] * alpha + bb * (1 - alpha);
+    pixels[p + 3] = 255;
   }
 
   ctx.putImageData(imgData, 0, 0);
   dlBtn.href = canvas.toDataURL('image/png');
   dlBtn.style.display = 'block';
-  hint.style.display = 'none';
 }
 </script>
 </body>
